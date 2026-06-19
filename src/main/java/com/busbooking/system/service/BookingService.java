@@ -2,6 +2,9 @@ package com.busbooking.system.service;
 
 import com.busbooking.system.dto.BookingRequest;
 import com.busbooking.system.entity.*;
+import com.busbooking.system.exception.BookingNotFoundException;
+import com.busbooking.system.exception.InvalidSeatException;
+import com.busbooking.system.exception.SeatAlreadyBookedException;
 import com.busbooking.system.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,92 +17,144 @@ import java.util.List;
 @RequiredArgsConstructor
 public class BookingService {
 
-    private final BookingRepository bookingRepo;
-    private final BookingSeatRepository bookingSeatRepo;
-    private final UserRepository userRepo;
-    private final BusScheduleRepository scheduleRepo;
-    private final SeatRepository seatRepo;
+        private final BookingRepository bookingRepo;
+        private final BookingSeatRepository bookingSeatRepo;
+        private final BusScheduleRepository scheduleRepo;
+        private final SeatRepository seatRepo;
+        private final RedisSeatLockService redisSeatLockService;
+        private final CurrentUserService currentUserService;
 
-    @Transactional
-    public Booking createBooking(BookingRequest request) {
+        @Transactional
+        public Booking createBooking(BookingRequest request) {
 
-        User user = userRepo.findById(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                User user = currentUserService.getCurrentUser();
+    
 
-        BusSchedule schedule = scheduleRepo
-                .findById(request.getScheduleId())
-                .orElseThrow(() -> new RuntimeException("Schedule not found"));
+                for (Long seatId : request.getSeatIds()) {
 
-        // LOCK seats
-        List<Seat> seats = seatRepo.findSeatsWithLock(
-                request.getSeatIds());
+                        Long lockedUserId = redisSeatLockService.getLockedUser(
+                                        request.getScheduleId(),
+                                        seatId);
 
-        // validate seat ids
-        if (seats.size() != request.getSeatIds().size()) {
-            throw new RuntimeException("Invalid seat ids");
+                        if (lockedUserId == null) {
+
+                                throw new RuntimeException(
+                                                "Please lock seat before booking");
+                        }
+
+                        if (!lockedUserId.equals(
+                                        user.getId())) {
+
+                                throw new RuntimeException(
+                                                "Seat is currently locked by another user");
+                        }
+                }
+
+                // duplicate seat ids validation
+                if (request.getSeatIds().size() != request.getSeatIds()
+                                .stream()
+                                .distinct()
+                                .count()) {
+
+                        throw new InvalidSeatException(
+                                        "Duplicate seat ids are not allowed");
+                }
+
+                BusSchedule schedule = scheduleRepo
+                                .findById(request.getScheduleId())
+                                .orElseThrow(() -> new RuntimeException(
+                                                "Schedule not found"));
+
+                // LOCK seats
+                List<Seat> seats = seatRepo.findSeatsWithLock(
+                                request.getSeatIds());
+
+                // validate seat ids
+                if (seats.size() != request.getSeatIds().size()) {
+
+                        throw new InvalidSeatException(
+                                        "Invalid seat ids");
+                }
+
+                // duplicate booking check
+                List<BookingSeat> bookedSeats = bookingSeatRepo.findBookedSeats(
+                                request.getSeatIds(),
+                                request.getScheduleId(),
+                                BookingStatus.CONFIRMED);
+
+                if (!bookedSeats.isEmpty()) {
+
+                        throw new SeatAlreadyBookedException(
+                                        "One or more seats already booked");
+                }
+
+                Booking booking = Booking.builder()
+                                .user(user)
+                                .schedule(schedule)
+                                .status(BookingStatus.CONFIRMED)
+                                .build();
+
+                booking = bookingRepo.save(booking);
+
+                List<BookingSeat> bookingSeats = new ArrayList<>();
+
+                for (Seat seat : seats) {
+
+                        if (!seat.getBus().getId()
+                                        .equals(schedule.getBus().getId())) {
+
+                                throw new InvalidSeatException(
+                                                "Seat does not belong to this bus");
+                        }
+
+                        bookingSeats.add(
+                                        BookingSeat.builder()
+                                                        .booking(booking)
+                                                        .seat(seat)
+                                                        .build());
+                }
+
+                bookingSeatRepo.saveAll(bookingSeats);
+
+                for (Long seatId : request.getSeatIds()) {
+
+                        redisSeatLockService.releaseSeat(
+                                request.getScheduleId(),
+                                seatId
+                        );
+                    }
+
+                return booking;
         }
 
-        // duplicate booking check
-        List<BookingSeat> bookedSeats = bookingSeatRepo.findBookedSeats(
-                request.getSeatIds(),
-                request.getScheduleId(),
-                BookingStatus.CONFIRMED);
+        public List<Booking> getMyBookings() {
 
-        if (!bookedSeats.isEmpty()) {
-            throw new RuntimeException(
-                    "One or more seats already booked");
+                User user = currentUserService.getCurrentUser();
+
+                return bookingRepo.findByUserId(
+                        user.getId()
+                );
         }
 
-        Booking booking = Booking.builder()
-                .user(user)
-                .schedule(schedule)
-                .status(BookingStatus.CONFIRMED)
-                .build();
+        public Booking cancelBooking(
+                        Long bookingId) {
 
-        booking = bookingRepo.save(booking);
+                User user = currentUserService.getCurrentUser();
+                  
 
-        List<BookingSeat> bookingSeats = new ArrayList<>();
+                Booking booking = bookingRepo
+                                .findByIdAndUser_Id(
+                                                bookingId,
+                                                user.getId());
 
-        for (Seat seat : seats) {
+                if (booking == null) {
+                        throw new BookingNotFoundException(
+                                        "Booking not found");
+                }
 
-            if (!seat.getBus().getId()
-                    .equals(schedule.getBus().getId())) {
+                booking.setStatus(
+                                BookingStatus.CANCELLED);
 
-                throw new RuntimeException(
-                        "Seat does not belong to this bus");
-            }
-
-            bookingSeats.add(
-                    BookingSeat.builder()
-                            .booking(booking)
-                            .seat(seat)
-                            .build());
+                return bookingRepo.save(booking);
         }
-
-        bookingSeatRepo.saveAll(bookingSeats);
-
-        return booking;
-    }
-
-    public List<Booking> getBookingsByUser(Long userId) {
-        return bookingRepo.findByUserId(userId);
-    }
-
-    public Booking cancelBooking(
-            Long bookingId,
-            Long userId) {
-
-        Booking booking = bookingRepo
-                .findByIdAndUser_Id(
-                        bookingId,
-                        userId);
-
-        if (booking == null) {
-            throw new RuntimeException("Booking not found");
-        }
-
-        booking.setStatus(BookingStatus.CANCELLED);
-
-        return bookingRepo.save(booking);
-    }
 }

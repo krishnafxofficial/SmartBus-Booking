@@ -1,0 +1,23 @@
+services:
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  bus-booking-app:
+    image: bus-booking-system:latest
+    container_name: bus-booking-app
+
+    ports:
+      - "8082:8082"
+
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://host.docker.internal:3306/bus_booking
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: Radhe@07Radhe@07
+      SPRING_DATA_REDIS_HOST: redis
+
+    depends_on:
+      - redis

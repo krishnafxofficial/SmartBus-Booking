@@ -9,7 +9,6 @@ import java.util.List;
 @Setter
 public class BookingRequest {
 
-    private Long userId;
     private Long scheduleId;
     private List<Long> seatIds;
 }

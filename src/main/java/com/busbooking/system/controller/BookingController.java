@@ -5,6 +5,7 @@ import com.busbooking.system.entity.Booking;
 import com.busbooking.system.service.BookingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import com.busbooking.system.service.RedisSeatLockService;
 
 import java.util.List;
 
@@ -14,6 +15,7 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService service;
+private final RedisSeatLockService redisSeatLockService;
 
     @PostMapping
     public Booking createBooking(
@@ -22,20 +24,16 @@ public class BookingController {
         return service.createBooking(request);
     }
 
-    @GetMapping("/user/{userId}")
-    public List<Booking> getUserBookings(
-            @PathVariable Long userId
-    ) {
-        return service.getBookingsByUser(userId);
+    @GetMapping("/my-bookings")
+    public List<Booking> getMyBookings() {
+        return service.getMyBookings();
     }
+    
     @PutMapping("/{bookingId}/cancel")
     public Booking cancelBooking(
-            @PathVariable Long bookingId,
-            @RequestParam Long userId
+            @PathVariable Long bookingId
     ) {
-        return service.cancelBooking(
-                bookingId,
-                userId
-        );
+        return service.cancelBooking(bookingId);
     }
+
 }

@@ -4,6 +4,7 @@ import com.busbooking.system.entity.BookingSeat;
 import com.busbooking.system.entity.BookingStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import java.util.List;
 
 public interface BookingSeatRepository extends JpaRepository<BookingSeat, Long> {
